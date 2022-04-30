@@ -1,2 +1,1 @@
-R markdown file contains code
-HTML contains report
+To View, please visit: https://rpubs.com/kkhazeni/WhoopAnalysis
