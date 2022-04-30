@@ -1,0 +1,385 @@
+---
+title: "Analyzing Whoop Health Data"
+author: "Kaivan Khazeni"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+    toc: yes
+  html_document:
+    toc: yes
+    df_print: paged
+  pdf_document: null
+---
+
+#  __Introduction__
+
+### Background:
+Whoop is a fitness tracker that took the market by storm. The more prominent fitness wearable technlogies are Fitbit, Apple Watch, Garmin, etc. While these products are great in their own way, Whoop's mindset was simple : provide technology and data that allows people to learn about their body and improve every day. As a whoop user, I have been fascinated about the data they provide and am very excited to dig into the health metrics at hand.
+
+
+### Context:
+Individuals who use this device have interest in bettering their health, and this begins with waking up every morning, ready to attack the day. During this analysis, I will dive into one of Whoop's core metrics , **Recovery**. Recovery is a score, 1-100, that whoop provides. How is this metric found? We do not know the answer at hand but the best guess is some combination of features that are used in a model to accurately predict and designate a recovery score.
+
+
+### Study Focus:
+Research has stated that sleep is important in developing good health and waking up feeling refreshed, but how true is this? Whoop has gone through extensive studies and research developing this product and they believe Recoverry is the metric to increase. I will work to find out if sleep is the most important metric in regards to Recovery. In the process, I will find what variables can be used to enhance and predict recovery. Whoop provides many metrics, however for this analysis I will focus on these as the main feature set when implementing a model / analyzing for any significance:
+
+# __Data__
+
++ Independent Variables:
+  1. __Sleep Efficiency__ : Balance between different stages of sleep (Light, REM, DEEP).
+  2. __Hours of Sleep__ : Hours , Minutes asleep
+  3. __Sleep Consistency__ : Are you sleeping and waking up at the same times every day and night?
+  4. __Heart Rate Variability__ : Time in between off heart beats
+  5. __Resting Heart Rate__ : Heart rate at a still or semi still state.
+  
++ Dependent Variable:
+  1. __Recovery Score__ : 0-100 scale of how ready your body is to take on additional strain in the day.
+
+My goal is to find relationships between these variables and also potentially implement a model that predicts recovery "the best".
+
+The data can be found on a spreadsheet here : https://docs.google.com/spreadsheets/d/101VFdWUNabrT6nu9_EokXFK-Pq4pQLxUbUiooeK5H8M/export?format=csv&gid=1713221660
+
+After reading data, I removed the rows with any missing values and selected the columns of interest, which will be seen below in a Data Frame form.
+```{r, echo = FALSE,error = TRUE}
+#This is just a data cleaning section. Reading data then selecting DF.
+# Will also delete NA rows
+library(readr)
+recoveries <- read_csv("~/recoveries.csv")
+df = subset(recoveries, select = c('RHR','Sleep Consistency',
+                                    'Hours of Sleep', 'HRV', 'Sleep Efficiency (%)','Recovery') )
+df_dates = subset(recoveries, select = c('Date','RHR','Sleep Consistency',
+                                    'Hours of Sleep', 'HRV', 'Sleep Efficiency (%)','Recovery') )
+df = na.omit(df)
+
+df_dates = na.omit(df_dates)
+
+colnames(df) <- c('RHR','SleepConsistency','HoursOfSleep','HRV','SleepEfficiency','Recovery')
+
+dates <- df_dates$Date
+print(df)
+```
+
+# __Analysis__
+The main parts of this testing process will include analyzing what the recovery distribution looks like. I do not want to assume normality, and will plot to back results. 
+
+```{r, echo=FALSE, error=TRUE}
+# histogram with added parameters
+hist(df$Recovery,
+main="Distribution for Recovery Scores",
+xlab="Recovery Score",
+xlim=c(0,100),
+col="red",
+freq=TRUE
+)
+```
+As seen, there is a semi-normal bell curve. The reason behind the skewness to the right (higher recovery) would be based on the individual. Since this is my data, if I took care of other metrics and paid attention, this would be a perfectly find chart. I can assume normality and continue.
+
+
+The next step is to find any __correlation__ between these metrics. Below will display that information.
+
+```{r,echo=FALSE, message = FALSE,error=FALSE}
+df.cor = cor(df)
+install.packages("corrplot",repos = "http://cran.us.r-project.org")
+library(corrplot)
+corrplot(df.cor, method = 'number',order = 'FPC', type = 'lower',)
+#corrplot(df.cor, method = 'circle', order = 'FPC', type = 'lower', diag = FALSE)
+```
+
+We do see a very strong correlation between __HRV__ and __Recovery__, and a slight correlation between __Sleep Efficiency__ and _Hours of Sleep__ , some negative (but strong) examples are __RHR__ to a lower recovery and __HRV__ which aligns with the studies. Usually Heart Rate Variability and Resting Heart Rate work in opposites, when one trends higher, the other lower. 
+
+
+I will now test different models to find the most accurate in terms of accuracy when predicting the recovery. Since this data is numerical and not categorical, Regression models will work best compared to Naive Bayes and K-Nearest-Neighbors. Those models work great with categorical data or binary results however in this situation, we want to get the recovery score out of a 1-100 scale.
+
+The second will be as follows. I am going to shift the recovery score. This is how the score is displayed on the web dashboard for the company, but it is split into a __Green,Yellow,Red__ Recovery. I am going to allow 1-33 to be red, 34-66 to be yellow, and 67 to 100 to be green. I will do this in a 0,1,2 format respectively.
+
+This data for recovery, as stated, is a 1-100 scale so the values in that target column vary. I am going to run two different models and find the multiclass.ROC and the area under the curve. First will be with the whole data set of recovery and fine tuning that.
+
+### Logistic Regression with Original Recovery Scores
+```{r, error=TRUE, message=FALSE, echo=FALSE}
+#Full Model
+print("Full Model with original Recovery data")
+library(pROC)
+sample <- sample(c(TRUE, FALSE), nrow(df), replace=TRUE, prob=c(0.7,0.3))
+train <- df[sample, ]
+test <- df[!sample, ] 
+model <- lm(Recovery ~ HRV + RHR + SleepConsistency + SleepEfficiency + HoursOfSleep,data = train) 
+summary(model)
+```
+
+There are a couple of notable metrics to mention with this summary.
+
+__Firstly - T Value__:
+We see that the t-value, a metric to indicate unit change between variable and target (Recovery) occurs or exists. We see that __HRV__ is the largest with 25.536, followed by __Hours of Sleep__ with 3.769. In the negative direction, we see as __RHR__
+T-value is -2.669, and __Sleep Consistency__  is -1.515, which is not that important.
+
+__Secondly - Pr(>|t)__:
+This value indicates significance in the variable, with relation to the target variable. If the value is less than __.05__, we can say that variable is significant, otherwise, we can remove from the model. Based off this summary, the variables that fall in this category are __HRB, RHR, and Hours of Sleep__.
+
+__Thirdly - Multiple R-Squared__:
+This value is the residual error, which results in a 74.93 score. While this is not awful, it certainly can be improved so we will keep an eye on this.
+
+
+```{r, error=TRUE,message=FALSE,echo=FALSE}
+print("Error Rate")
+sigma(model)/mean(df$Recovery)
+predicted <- predict(model, test, type="response")
+model_A_auc <- multiclass.roc(test$Recovery, predicted)$auc[1]
+print("AUC score, Area under Curve, and the closer to 100, the better the model")
+model_A_auc
+```
+
+The next step is to run the model with only the significant variables and test for Residual Error and Error rate/AUC again.
+
+```{r, error=TRUE, message=FALSE, echo=FALSE}
+#Full Model - Sign/ Variables
+library(pROC)
+sample_new <- sample(c(TRUE, FALSE), nrow(df), replace=TRUE, prob=c(0.7,0.3))
+train_new <- df[sample_new, ]
+test_new <- df[!sample_new, ] 
+model_new <- lm(Recovery ~ HRV + RHR +HoursOfSleep,data = train_new) 
+summary(model_new)
+```
+
+```{r, error=TRUE,message=FALSE,echo=FALSE}
+print("Error Rate")
+sigma(model_new)/mean(df$Recovery)
+predicted_new <- predict(model_new, test_new, type="response")
+model_A_auc_new <- multiclass.roc(test_new$Recovery, predicted_new)$auc[1]
+print("AUC score, Area under Curve, and the closer to 100, the better the model")
+model_A_auc_new
+```
+
+This new model did not differ much from the first, however the residual increased which is better, at roughly 76%. The error rate stayed the same
+
+```{r,error=TRUE,message=FALSE,echo=FALSE,fig.align='center'}
+predict_plot = predict(model_new,df)
+res = resid((model_new))
+#produce residual vs. fitted plot
+group <- as.factor(ifelse(df$Recovery <= 33 & predict_plot <=33 , "Group 1",
+                        ifelse(df$Recovery > 34 & df$Recovery <66 & predict_plot > 34 & predict_plot < 66, "Group 2",
+                               ifelse(df$Recovery >=67 & predict_plot >=67,"Group 3",
+                        "Group 4"))))
+
+colors <- c("Red",
+            "Blue",
+            "Green",
+            "Black")
+plot(df$Recovery, predict_plot, col = colors[group], pch = 20,
+      xlab = "Observed Recovery", ylab = "Expected Recovery")
+legend("topleft",
+       legend = c("Observed & Expected in Red Range", "Observed & Expected in Yellow Range", "Observed & Expected in Green Range","Observed & Expected in Different Range"),
+       pch = 19,
+       col = colors
+       )
+
+```
+
+Based off this chart, we see that the relationship between expected and observed has a positive relationship, meaning there is a correlation, or in a sense, a linear relationship. This backs our model by indicating the accuracy levels and the fact that the predicted outcomes of each input set is close to the level of the actual observed score.
+
+Also, the chart is split into 4 groups. To summarize, the groups are indicative if the recovery from the observed and expected sets are in the same range, meaning in the red, yellow, green (0,1,2) sets. Black means they are not in the same set and this could be due to a deviation that is minimal in value, however if the threshold is 66 for yellow, and two points are just 2 values apart, they could be plotted in two different regions but that difference is not signficant enough to worry at this point. The majority of the data points lie in the categories correctly.
+
+
+### The Second Model With Adjusted Recovery
+
+```{r, message=FALSE,error=FALSE, echo=TRUE}
+df_copy = data.frame(df)
+#Red
+df_copy$Recovery[df_copy$Recovery <= 33] <- 0 
+#Yellow
+df_copy$Recovery[df_copy$Recovery > 33 & df_copy$Recovery <= 66 & df_copy$Recovery != 0] <- 1
+#Green
+df_copy$Recovery[df_copy$Recovery >= 67 & df_copy$Recovery!= 0 & df_copy$Recovery != 1] <- 2 
+```
+
+```{r, error=TRUE, message=FALSE, echo=FALSE}
+print("Adjusted Recovery data to 0,1,2 scale")
+#0,1,2 Model
+sampleB <- sample(c(TRUE, FALSE), nrow(df_copy), replace=TRUE, prob=c(0.7,0.3))
+trainB <- df_copy[sampleB, ]
+testB <- df_copy[!sampleB, ] 
+modelB <- lm(Recovery ~ HRV + RHR + SleepConsistency + SleepEfficiency + HoursOfSleep,data = trainB) 
+predictedB <- predict(modelB, testB, type="response")
+model_B_auc <- multiclass.roc(testB$Recovery, predictedB)$auc[1]
+model_B_auc
+```
+
+The results do show that with the AUC of both models, the adjusted yields better results slightly. This is expected due to the nature of the data. With a logistic regression model, binary or multi-class classification results in better predictions. With variable data (numerical type) the goal is to minimize the residuals and a model can be graded on the lowest sum of residual error.
+
+
+```{r, error=TRUE,message=FALSE}
+summary(modelB)
+print("AIC Score for Adjusted Recovery")
+AIC(modelB)
+```
+AIC is much lower for the adjusted recovery, but that is expected. It is the simpler model with less options (Numerical Regression versus the classification of 3 classes). However the R value is much lower than full recovery model.
+
+As seen above, the variables that had a p-value < 0.05 were __HRV,RHR,and Hours of Sleep__. This means that those variables had the best impact on predicting the Recovery score. I will now implement a model that uses those variables and compare the results to the original models.
+
+
+```{r, error=TRUE,message=FALSE, echo=FALSE}
+#modelC <- glm(Recovery ~ HRV + RHR + HoursOfSleep, data=df_copy)
+#AIC(modelC)
+
+sampleC <- sample(c(TRUE, FALSE), nrow(df_copy), replace=TRUE, prob=c(0.7,0.3))
+trainC <- df_copy[sampleC, ]
+testC <- df_copy[!sampleC, ] 
+modelC <- lm(Recovery ~ HRV + RHR + HoursOfSleep,data=trainC)
+
+predictedC <- predict(modelC, testC, type="response")
+
+
+model_C_auc <- multiclass.roc(testC$Recovery, predictedC)$auc[1]
+#model_C_auc
+summary(modelC)
+```
+
+To summarize the results, we will view them side by side:
+```{r,message = FALSE, error=TRUE, echo=FALSE}
+library(pROC)
+results <- data.frame(Formula = c("Original Recovery w/ All 5 Variables", "Adjusted Recovery w/ All 5 Variables", "Adjusted Recovery w/ top 3 Variables"),
+                 AUC = c(model_A_auc_new, model_B_auc, model_C_auc),
+                 AIC = c(AIC(model_new), AIC(modelB), AIC(modelC)),
+                 R2 = c(summary(model_new)$r.squared, summary(modelB)$r.squared, summary(modelC)$r.squared))
+
+
+library(lemon)
+knit_print.data.frame <- lemon_print
+```
+
+In the below chart, for reference, we want to minimize AIC and Maximize AUC:
+
+```{r ,caption="AUC and AIC for each Log. Reg Model",render=lemon_print,fig.align='center',echo=FALSE}
+results
+```
+
+There are some trade off, where AUC is 3 percent higher in the adjusted model with 3 variables, but the AIC is slightly higher. To explain this, AUC is the area under the ROC curve, means how well this model can differentiate between the classes, i.e, recovery score. Having this higher means this model can recognize the difference in the 0,1,2 scores, or even the full recovery score.
+
+```{r, echo=FALSE, error=TRUE,message=FALSE}
+library(stargazer)
+
+stargazer(modelC,type='text')
+```
+
+Something of concern could be this statistic seen above which is the R squared value. This is a statistic we want to maximize however we see than this can range where as a solid model hovers around 90-95%. This is a common issue to run into with classification, and specifically binary versus multi-class classification versus regression. __AUC__ can be thought of how well our model can differentiate new examples into their classes. We see that our model with 3 variable choices resulted in a high AUC and this is expected due to the nature of the model and lower variable count. However we see the R squared value is surprisingly low for our third model
+
+There are different opinions on the metrics we used to analyze the models. __R__ is a statistic we want to maximize, along with __AUC__, however __AIC__ we want to minimize. In our situation, we have the worst AIC with the best __R__ score, and the better AIC models have low __R__ values. This is due to the target variable. When we use numerical regression, R is something we __need__ to consider since it depicts how well the model and outcome are related to the orignal data. AUC and AIC however are not to be ignored, but something to think of as a trade off. In our case, we need to decide what kind of Recovery we want:
+
+__Do we want to predict a specific numerical value, in the domain of Recovery, and minimize the residual error?__
+
+or
+
+__Do we want to predict a category of the Recovery in 3 classes, and that would be sufficient enough in our analysis?__
+
+In short, if we want to find a real number in the domain of the original target variable, we need to use model 1, which was numerical predictions with the 3 significant variables; __HRV, RHR, Hours of Sleep__.
+
+However, to run a different route, since we see the logistic regression model did not support the category route, let us test a different classifer, perhaps a decision tree model.
+
+## Decision Tree Model
+
+Another way we can test this data is a Decision Tree, where the tree is formed by calculating the best 'route' to a decision, or in our case, the recovery score. This model requires classification, therefore we will use the adjusted dataframe that consist of the 0,1,2 Recovery Score ranking (red, yellow, green).
+
+Also, since the tree needs to find a best variable to split on, the data needs to be in a binary format, or multiclass, but not numerical.
+
+To do this, I will convert each column as a 0 or 1, that is, being below or above the median value of that column, then I will pass it into the Decision Tree Classifer and test the results.
+
+```{r,echo=FALSE,error=TRUE,message=FALSE}
+library(rpart)
+library(readr)
+library(caTools)
+library(dplyr)
+library(party)
+library(partykit)
+library(rpart.plot)
+
+df_dt = data.frame(df_copy)
+
+median_hrv <- median(df_dt$HRV)
+median_rhr <- median(df_dt$RHR)
+median_hoursSleep <- median(df_dt$HoursOfSleep)
+median_sleepEfficiency <-median(df_dt$SleepEfficiency)
+median_sleepConsistency <- median(df_dt$SleepConsistency)
+
+df_dt$HRV[df_dt$HRV < median_hrv] <- 0 
+df_dt$HRV[df_dt$HRV >= median_hrv] <- 1 
+
+df_dt$HoursOfSleep[df_dt$HoursOfSleep < median_hoursSleep] <- 0 
+df_dt$HoursOfSleep[df_dt$HoursOfSleep >= median_hoursSleep] <- 1 
+
+df_dt$SleepEfficiency[df_dt$SleepEfficiency < median_sleepEfficiency] <- 0 
+df_dt$SleepEfficiency[df_dt$SleepEfficiency >= median_sleepEfficiency] <- 1 
+
+df_dt$SleepConsistency[df_dt$SleepConsistency < median_sleepConsistency] <- 0 
+df_dt$SleepConsistency[df_dt$SleepConsistency >= median_sleepConsistency] <- 1 
+
+df_dt$RHR[df_dt$RHR < median_rhr] <- 0 
+df_dt$RHR[df_dt$RHR >= median_rhr] <- 1 
+
+
+set.seed(123)
+sample_dt = sample.split(df_dt, SplitRatio = .65)
+train_dt <- subset(df_dt, sample_dt == TRUE)
+test_dt <- subset(df_dt, sample_dt == FALSE)
+print("Train Table Recovery Distribution")
+prop.table(table(train_dt$Recovery))
+print("Test Table Recovery Distribution")
+prop.table(table(test_dt$Recovery))
+
+```
+
+We see that the split between recovery scores are similar in the Test vs Train split. 1, or yellow (33-66 percent recovery) is still the number one value recorded
+
+```{r,error=TRUE, echo=FALSE, message = FALSE}
+library(rpart)
+library(rpart.plot)
+
+fit <- rpart(Recovery~., data = train_dt, method = 'class')
+rpart.plot(fit,extra=104)
+```
+
+In this tree, we do not see the use of the 0 score (red, 0-33) and this is due to the fact that the actual percentage of 0's is so small and insignificant, it produces no information gain (the statistic that leads the classifier to pick the best attribute to split on).
+
+```{r,error=TRUE, echo=FALSE, message=FALSE}
+printcp(fit)
+
+```
+
+Something to take note of is the use of variables, which was __HRV, Hours of Sleep, and RHR__ which were the three variables we found to be the most significant in the __Logistic Regression Model__ we implemented prior.
+
+```{r, error=TRUE, message=FALSE, echo=FALSE}
+predict_unseen <-predict(fit, test_dt, type = 'class')
+
+
+table_mat <- table(test_dt$Recovery, predict_unseen)
+table_mat
+accuracy_Test <- sum(diag(table_mat)) / sum(table_mat)
+accuracy_Test
+```
+
+We see with this test for the decision tree model, the accuracy is comprable to the __R__ value found in the Logistic Regression model for full numerical prediction. This leads us to believe, with the support of the analysis, that for full prediction in the original domain set, we want to use Logistic Regression, however for classifying category of Recovery, we can utilize a Decision Tree Model.
+
+
+# __Summary__
+During this analysis, we were able to narrow down the Whoop data set for 3 different models. As a recap:
+
+1. Logistic Regression with Full Recovery
+
+2. Logistic Regression with Adjusted Recovery Classes
+
+3. Decision Tree with Adjusted Recovery Classes
+
+Within each model, we found the significant variables to use and compared many different statistics. Circling back to our original question, __is sleep the most important metric to worry about in terms of recovery?__ No, it is not. In this analysis, we found that both __HRV and RHR__ had more significance in predicting the recovery, we see this with __the correlation plot, and the significance values of the variables in the models__, Hours of Sleep did have some importance but nearly as much.
+
+__The updated question to ponder is: What helps increase HRV, which in return, increases Recovery score?__
+[According to Whoop (click to view article)](https://www.whoop.com/thelocker/increase-hrv-heart-rate-variability/), HRV can be increased by a number of ways:
+
+Firstly, __exercise and train within a healthy range__. This means, do not be lazy and not exercise, but do not go over your personal limits. 
+
+Secondly, __Nutrition is key__, eating healthy foods and implementing a smart diet will lead to better body functions and HRV.
+
+Thirdly, __Hydration__, consuming water based on activity level is key. Dehydration influences many factors from sleep quality to resting heart rate.
+
+The list continues to speak about Sleep Consistency and Quality, however the first 3 points all impact Sleep itself. __In order to increase or maintain a favorable recovery score, work on increasing HRV over time, and by following the steps listed above and in the article, you will see an overall increase in Recovery scores__.
+
